@@ -24,10 +24,10 @@ class VocabularyTestApp:
             f"{int(self.screen_width * 0.8)}x{int(self.screen_height * 0.8)}+{int(self.screen_width * 0.1)}+{int(self.screen_height * 0.1)}")
         self.root.resizable(True, True)
 
-        # 主题颜色配置
+        # 主题颜色配置 - 修改了强调色为更醒目的橙色
         self.primary_color = "#007ACC"
         self.secondary_color = "#223E5F"
-        self.accent_color = "#FF6B35"
+        self.accent_color = "#FF6B35"  # 更醒目的橙色
         self.light_color = "#F5F7FA"
         self.dark_color = "#2D3B45"
 
@@ -234,13 +234,22 @@ class VocabularyTestApp:
         left_button_frame = ttk.Frame(bottom_frame)
         left_button_frame.pack(side=tk.LEFT)
 
+        # 配置醒目的开始测试按钮样式
+        style = ttk.Style()
+        style.configure('Accent.TButton',
+                        font=self.button_font,
+                        foreground='white',
+                        background=self.accent_color,  # 使用更醒目的橙色
+                        padding=10,
+                        borderwidth=1,
+                        relief=tk.RAISED)
+        style.map('Accent.TButton',
+                  foreground=[('pressed', 'white'), ('active', 'white')],
+                  background=[('pressed', '!disabled', '#E65C00'), ('active', '#FF8C66')])  # 更深的橙色变体
+
         self.start_button = ttk.Button(left_button_frame, text="开始测试", command=self.start_test,
                                        style='Accent.TButton')
         self.start_button.pack(side=tk.LEFT, padx=(0, 10))
-
-        self.check_button = ttk.Button(left_button_frame, text="检查答案", command=self.check_answer,
-                                       state=tk.DISABLED)
-        self.check_button.pack(side=tk.LEFT, padx=(0, 10))
 
         self.reset_button = ttk.Button(left_button_frame, text="重置测试", command=self.reset_test)
         self.reset_button.pack(side=tk.LEFT)
@@ -632,12 +641,10 @@ class VocabularyTestApp:
                 text=option,
                 variable=self.selected_var,
                 value=option,
-                style='Option.TRadiobutton'
+                style='Option.TRadiobutton',
+                command=lambda opt=option, corr=is_correct: self.submit_answer(opt, corr)
             )
             radio_btn.pack(anchor=tk.W, pady=5)
-
-            # 存储选项信息，用于检查答案
-            radio_btn.option_info = (option, is_correct)
 
     def clear_options(self):
         """清除所有选项"""
@@ -650,38 +657,128 @@ class VocabularyTestApp:
             self.result_label.config(text="未成功加载单词，请检查文件或添加新单词。", foreground="red")
             return
 
-        if self.question_index == 0:
-            self.test_questions = self.select_questions()
-            if not self.test_questions:
-                return
-
-        if self.question_index >= len(self.test_questions):
-            self.result_label.config(text="测试已结束，请查看结果。", foreground="red")
+        self.test_questions = self.select_questions()
+        if not self.test_questions:
             return
 
-        # 开始计时器
-        if not self.test_started:
-            self.test_started = True
-            self.start_time = datetime.now()
-            self.update_timer()
+        self.test_started = True
+        self.start_time = datetime.now()
+        self.time_remaining = self.time_limit
+        self.correct_count = 0
+        self.total_count = 0
+        self.wrong_answers = []
+        self.question_index = 0
 
-        self.current_word = self.test_questions[self.question_index]
-        self.selected_var.set("")
-        self.result_label.config(text="")
-
-        if self.mode.get() == "word_to_meaning":
-            self.word_label.config(text=f"单词：{self.current_word[0]}")
-            self.pos_label.config(text=f"词性：{self.current_word[1]}")  # 显示词性
-            self.meaning_label.config(text="")
-            self.show_options(self.current_word[2], [word[2] for word in self.words if word[2]])  # 使用词义作为选项
-        else:
-            self.word_label.config(text="")
-            self.pos_label.config(text=f"词性：{self.current_word[1]}")  # 显示词性
-            self.meaning_label.config(text=f"释义：{self.current_word[2]}")
-            self.show_options(self.current_word[0], [word[0] for word in self.words if word[0]])  # 使用单词作为选项
-
-        self.check_button.config(state=tk.NORMAL)
+        self.update_timer()
         self.update_progress()
+        self.show_question()
+
+    def reset_test(self):
+        """重置测试"""
+        self.test_started = False
+        self.time_remaining = self.time_limit
+        self.correct_count = 0
+        self.total_count = 0
+        self.wrong_answers = []
+        self.question_index = 0
+
+        if self.timer_id:
+            self.root.after_cancel(self.timer_id)
+            self.timer_id = None
+
+        self.timer_label.config(text="20:00", foreground="green")
+        self.update_progress()
+
+        if self.words:
+            self.show_welcome()
+        else:
+            self.show_empty_state()
+
+    def show_question(self):
+        """显示当前题目"""
+        if self.question_index < len(self.test_questions):
+            self.current_word = self.test_questions[self.question_index]
+
+            if self.mode.get() == "word_to_meaning":
+                self.word_label.config(text=f"单词：{self.current_word[0]}")
+                self.pos_label.config(text=f"词性：{self.current_word[1]}")
+                self.meaning_label.config(text="")
+                self.show_options(self.current_word[2], [word[2] for word in self.words if word[2]])
+            else:
+                self.word_label.config(text="")
+                self.pos_label.config(text=f"词性：{self.current_word[1]}")
+                self.meaning_label.config(text=f"释义：{self.current_word[2]}")
+                self.show_options(self.current_word[0], [word[0] for word in self.words if word[0]])
+
+            self.update_progress()
+        else:
+            self.show_result()
+
+    def submit_answer(self, selected_option, is_correct):
+        """提交答案（自动校验并跳转下一题）"""
+        if not selected_option:
+            return
+
+        self.total_count += 1
+
+        if is_correct:
+            self.correct_count += 1
+            self.result_label.config(text="回答正确！", foreground="green")
+        else:
+            correct_answer = self.current_word[2] if self.mode.get() == "word_to_meaning" else self.current_word[0]
+            self.result_label.config(text=f"回答错误，正确答案是：{correct_answer}", foreground="red")
+            self.wrong_answers.append(self.current_word)  # 保存错误单词
+
+        # 短暂显示结果后继续
+        self.root.after(1500, self.next_question)
+
+    def next_question(self):
+        """移动到下一题或结束测试"""
+        self.question_index += 1
+
+        if self.question_index < len(self.test_questions):
+            self.show_question()  # 显示下一题
+            self.result_label.config(text="")  # 清空结果提示
+        else:
+            self.show_result()  # 测试结束，显示汇总结果
+
+        self.update_progress()
+
+    def show_result(self):
+        """显示测试结果"""
+        if self.timer_id:
+            self.root.after_cancel(self.timer_id)
+            self.timer_id = None
+
+        self.test_started = False
+
+        # 计算正确率
+        accuracy = (self.correct_count / self.total_count) * 100 if self.total_count > 0 else 0
+
+        # 构建结果文本
+        result_text = f"测试完成！\n"
+        result_text += f"正确数：{self.correct_count}/{self.total_count}\n"
+        result_text += f"正确率：{accuracy:.2f}%\n\n"
+
+        if self.wrong_answers:
+            result_text += "错误的单词：\n"
+            for word, pos, meaning in self.wrong_answers:
+                result_text += f"- {word} [{pos}]：{meaning}\n"
+
+        self.word_label.config(text="测试结果")
+        self.pos_label.config(text="")  # 清空词性标签
+        self.meaning_label.config(text="")
+        self.clear_options()
+        self.result_label.config(text=result_text)
+
+        # 保存历史记录
+        self.history_records.append({
+            'date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'correct': self.correct_count,
+            'total': self.total_count,
+            'wrong_words': self.wrong_answers
+        })
+        self.save_history()
 
     def update_timer(self):
         """更新计时器显示"""
@@ -689,167 +786,227 @@ class VocabularyTestApp:
             return
 
         elapsed = datetime.now() - self.start_time
-        self.time_remaining = self.time_limit - elapsed
+        remaining = self.time_limit - elapsed
 
-        if self.time_remaining <= timedelta(seconds=0):
-            self.time_remaining = timedelta(seconds=0)
+        if remaining.total_seconds() <= 0:
             self.timer_label.config(text="00:00", foreground="red")
-            self.time_up()
+            self.show_result()
             return
 
-        minutes, seconds = divmod(int(self.time_remaining.total_seconds()), 60)
+        minutes, seconds = divmod(int(remaining.total_seconds()), 60)
         time_str = f"{minutes:02d}:{seconds:02d}"
 
         # 根据剩余时间改变颜色
-        if self.time_remaining > timedelta(minutes=10):
-            self.timer_label.config(foreground="green")
-        elif self.time_remaining > timedelta(minutes=5):
-            self.timer_label.config(foreground="yellow")
-        else:
+        if remaining.total_seconds() <= 60:
             self.timer_label.config(foreground="red")
+        elif remaining.total_seconds() <= 300:
+            self.timer_label.config(foreground="orange")
+        else:
+            self.timer_label.config(foreground="green")
 
         self.timer_label.config(text=time_str)
         self.timer_id = self.root.after(1000, self.update_timer)
 
-    def time_up(self):
-        """时间到，自动结束测试"""
-        self.test_started = False
-        self.check_button.config(state=tk.DISABLED)
-
-        if self.total_count < 20:
-            messagebox.showinfo("时间到", "测试时间已结束，系统将自动提交当前答案。")
-            self.show_result()
-
-    def check_answer(self):
-        """检查答案"""
-        selected = self.selected_var.get()
-        if not selected:
-            self.result_label.config(text="请选择一个选项", foreground="red")
-            return
-
-        self.total_count += 1
-
-        if self.mode.get() == "word_to_meaning":
-            correct_answer = self.current_word[2]  # 使用词义作为正确答案
-        else:
-            correct_answer = self.current_word[0]  # 使用单词作为正确答案
-
-        if selected == correct_answer:
-            self.correct_count += 1
-            self.result_label.config(text="回答正确！", foreground="green")
-        else:
-            self.result_label.config(text=f"回答错误，正确答案是：{correct_answer}", foreground="red")
-            self.wrong_answers.append(self.current_word)  # 保存整个单词元组(包括词性)
-
-        # 禁用检查按钮，直到下一题
-        self.check_button.config(state=tk.DISABLED)
-
-        # 移动到下一题
-        self.question_index += 1
-
-        # 更新进度
-        self.update_progress()
-
-        # 检查是否完成所有题目
-        if self.question_index < len(self.test_questions):
-            # 显示下一题按钮
-            next_button = ttk.Button(self.result_frame, text="下一题", command=self.start_test)
-            next_button.pack(pady=5)
-        else:
-            # 测试完成，显示结果
-            self.show_result()
-
-    def show_result(self):
-        """显示测试结果"""
-        self.test_started = False
-        if self.timer_id:
-            self.root.after_cancel(self.timer_id)
-            self.timer_id = None
-
-        accuracy = self.correct_count / self.total_count * 100 if self.total_count > 0 else 0
-        result_text = f"测试完成！\n正确: {self.correct_count}/{self.total_count}\n正确率: {accuracy:.1f}%"
-
-        self.result_label.config(text=result_text, foreground=self.primary_color)
-
-        # 保存历史记录
-        if self.total_count > 0:
-            self.history_records.append({
-                'date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'correct': self.correct_count,
-                'total': self.total_count,
-                'wrong_words': self.wrong_answers.copy()
-            })
-            self.save_history()
-
-        # 显示错误单词（如果有）
-        if self.wrong_answers:
-            wrong_words_text = "\n\n错误的单词:\n"
-            for word, pos, meaning in self.wrong_answers:
-                wrong_words_text += f"{word} [{pos}] - {meaning}\n"
-
-            # 创建错误单词文本框
-            wrong_text = tk.Text(self.result_frame, font=self.result_font, wrap=tk.WORD, height=10)
-            wrong_text.pack(fill=tk.X, pady=(10, 0))
-            wrong_text.insert(tk.END, wrong_words_text)
-            wrong_text.config(state=tk.DISABLED)
-
-        # 重置测试按钮
-        reset_button = ttk.Button(self.result_frame, text="重新测试", command=self.reset_test)
-        reset_button.pack(pady=5)
-
-    def reset_test(self):
-        """重置测试"""
-        # 停止计时器
-        if self.timer_id:
-            self.root.after_cancel(self.timer_id)
-            self.timer_id = None
-
-        self.test_started = False
-        self.start_time = None
-        self.time_remaining = self.time_limit
-        self.timer_label.config(text="20:00", foreground="green")
-
-        self.correct_count = 0
-        self.total_count = 0
-        self.wrong_answers = []
-        self.test_questions = []
-        self.question_index = 0
-        self.current_word = None
-        self.selected_var.set("")
-
-        if not self.words:
-            self.show_empty_state()
-            return
-
-        if self.mode.get() == "word_to_meaning":
-            self.word_label.config(text="")
-            self.pos_label.config(text="")  # 清空词性标签
-            self.meaning_label.config(text="")
-        else:
-            self.word_label.config(text="")
-            self.pos_label.config(text="")  # 清空词性标签
-            self.meaning_label.config(text="")
-
-        self.clear_options()
-        self.result_label.config(text="测试已重置，请点击开始测试。")
-        self.update_progress()
-        self.check_button.config(state=tk.DISABLED)
-
-        # 移除结果区域的动态添加的控件
-        for widget in self.result_frame.winfo_children():
-            if widget != self.result_label and widget.winfo_class() != 'Labelframe':
-                widget.destroy()
-
     def update_progress(self):
         """更新进度显示"""
-        total_questions = len(self.test_questions) if self.test_questions else 20
+        total_questions = len(self.test_questions) if self.test_questions else 0
         self.progress_label.config(text=f"{self.question_index}/{total_questions}")
+
+    def add_word(self):
+        """添加新单词"""
+        word = self.word_to_add.get().strip()
+        pos = self.pos_to_add.get().strip()  # 获取词性
+        meaning = self.meaning_to_add.get().strip()
+
+        if not word or not meaning:
+            messagebox.showwarning("警告", "单词和释义不能为空！")
+            return
+
+        # 检查是否已存在该单词
+        for w, p, m in self.words:
+            if w.lower() == word.lower():
+                messagebox.showinfo("提示", f"单词 '{word}' 已存在！")
+                return
+
+        # 添加到单词列表
+        self.words.append((word, pos, meaning))
+        self.save_words()
+        self.refresh_word_list()
+
+        # 清空输入框
+        self.word_to_add.set("")
+        self.pos_to_add.set("")
+        self.meaning_to_add.set("")
+
+        messagebox.showinfo("成功", f"单词 '{word}' 已添加！")
+
+    def search_words(self):
+        """搜索单词"""
+        term = self.search_term.get().strip().lower()
+        if not term:
+            self.current_words_display = self.words.copy()
+        else:
+            self.current_words_display = []
+            for word, pos, meaning in self.words:
+                if term in word.lower() or term in pos.lower() or term in meaning.lower():
+                    self.current_words_display.append((word, pos, meaning))
+
+        self.current_page = 1
+        self.refresh_word_list()
+
+    def refresh_word_list(self):
+        """刷新单词列表"""
+        # 清空当前显示
+        for item in self.word_tree.get_children():
+            self.word_tree.delete(item)
+
+        # 获取当前页的单词
+        start_idx = (self.current_page - 1) * self.words_per_page
+        end_idx = min(start_idx + self.words_per_page, len(self.current_words_display))
+        current_words = self.current_words_display[start_idx:end_idx]
+
+        # 添加到表格
+        for word, pos, meaning in current_words:
+            self.word_tree.insert("", tk.END, values=(word, pos, meaning))
+
+        # 更新分页控件
+        total_pages = (len(self.current_words_display) + self.words_per_page - 1) // self.words_per_page
+        self.page_label.config(text=f"第 {self.current_page} 页，共 {total_pages} 页")
+
+        # 启用/禁用分页按钮
+        self.prev_button.config(state=tk.NORMAL if self.current_page > 1 else tk.DISABLED)
+        self.next_button.config(state=tk.NORMAL if self.current_page < total_pages else tk.DISABLED)
+
+    def prev_page(self):
+        """上一页"""
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.refresh_word_list()
+
+    def next_page(self):
+        """下一页"""
+        total_pages = (len(self.current_words_display) + self.words_per_page - 1) // self.words_per_page
+        if self.current_page < total_pages:
+            self.current_page += 1
+            self.refresh_word_list()
+
+    def on_double_click_word(self, event):
+        """双击删除单词"""
+        item = self.word_tree.selection()
+        if not item:
+            return
+
+        word, pos, meaning = self.word_tree.item(item[0], "values")
+        if messagebox.askyesno("确认", f"确定要删除单词 '{word}' 吗？"):
+            # 从列表中删除
+            self.words = [w for w in self.words if w[0] != word]
+            self.save_words()
+            self.search_words()  # 刷新显示
+
+    def refresh_history(self):
+        """刷新历史记录"""
+        # 清空当前显示
+        for item in self.history_tree.get_children():
+            self.history_tree.delete(item)
+
+        # 添加到表格
+        for record in self.history_records:
+            accuracy = (record['correct'] / record['total'] * 100) if record['total'] > 0 else 0
+            self.history_tree.insert("", tk.END, values=(
+                record['date'],
+                record['correct'],
+                record['total'],
+                f"{accuracy:.2f}%"
+            ))
+
+    def on_history_select(self, event):
+        """历史记录选择事件"""
+        item = self.history_tree.selection()
+        if not item:
+            return
+
+        # 获取选中的记录
+        record_idx = int(item[0].replace("I", ""), 16) - 1
+        if 0 <= record_idx < len(self.history_records):
+            record = self.history_records[record_idx]
+
+            # 构建详细结果
+            detail_text = f"日期: {record['date']}\n"
+            detail_text += f"正确数: {record['correct']}/{record['total']}\n"
+            accuracy = (record['correct'] / record['total'] * 100) if record['total'] > 0 else 0
+            detail_text += f"正确率: {accuracy:.2f}%\n\n"
+
+            if record['wrong_words']:
+                detail_text += "错误的单词：\n"
+                for word, pos, meaning in record['wrong_words']:
+                    detail_text += f"- {word} [{pos}]：{meaning}\n"
+            else:
+                detail_text += "恭喜！没有错误的单词。"
+
+            # 显示详细结果
+            self.detail_text.config(state=tk.NORMAL)
+            self.detail_text.delete(1.0, tk.END)
+            self.detail_text.insert(tk.END, detail_text)
+            self.detail_text.config(state=tk.DISABLED)
+
+    def update_stats_charts(self):
+        """更新统计图表"""
+        # 清除现有图表
+        self.ax1.clear()
+        self.ax2.clear()
+
+        # 正确率趋势图
+        if self.history_records:
+            dates = [record['date'] for record in self.history_records]
+            accuracies = [(record['correct'] / record['total'] * 100) for record in self.history_records]
+
+            self.ax1.plot(dates, accuracies, marker='o', linestyle='-', color=self.primary_color)
+            self.ax1.set_title('正确率趋势')
+            self.ax1.set_xlabel('日期')
+            self.ax1.set_ylabel('正确率 (%)')
+            self.ax1.set_ylim(0, 105)
+            self.ax1.tick_params(axis='x', rotation=45)
+
+            # 添加数据标签
+            for x, y in zip(dates, accuracies):
+                self.ax1.annotate(f'{y:.1f}%', (x, y), textcoords='offset points',
+                                  xytext=(0, 5), ha='center')
+
+        # 错误单词分布图
+        if self.history_records:
+            # 统计每个单词的错误次数
+            word_errors = {}
+            for record in self.history_records:
+                for word, pos, meaning in record['wrong_words']:
+                    full_word = f"{word} [{pos}]"
+                    if full_word in word_errors:
+                        word_errors[full_word] += 1
+                    else:
+                        word_errors[full_word] = 1
+
+            if word_errors:
+                # 取错误最多的10个单词
+                top_words = sorted(word_errors.items(), key=lambda x: x[1], reverse=True)[:10]
+                words = [word for word, count in top_words]
+                counts = [count for word, count in top_words]
+
+                self.ax2.barh(words, counts, color=self.accent_color)
+                self.ax2.set_title('错误最多的单词')
+                self.ax2.set_xlabel('错误次数')
+
+                # 添加数据标签
+                for i, (word, count) in enumerate(top_words):
+                    self.ax2.text(count + 0.2, i, str(count), va='center')
+
+        # 调整布局并绘制
+        self.figure.tight_layout()
+        self.canvas.draw()
 
     def import_excel_file(self):
         """导入Excel文件"""
         file_path = filedialog.askopenfilename(
             title="选择Excel文件",
-            filetypes=[("Excel files", "*.xlsx *.xls")]
+            filetypes=[("Excel files", "*.xlsx;*.xls")]
         )
 
         if not file_path:
@@ -871,260 +1028,30 @@ class VocabularyTestApp:
                 pos = row[1] if max_column >= 2 else ""  # 词性(如果有)
                 meaning = row[2] if max_column >= 3 else ""  # 词义(如果有)
 
-                new_words.append((word, pos, meaning))
+                # 检查是否已存在该单词
+                exists = False
+                for w, p, m in self.words:
+                    if w.lower() == word.lower():
+                        exists = True
+                        break
 
-            if not new_words:
-                messagebox.showinfo("提示", "未找到有效的单词数据")
-                return
+                if not exists:
+                    new_words.append((word, pos, meaning))
 
-            # 添加新单词
-            existing_words = set([word.lower() for word, _, _ in self.words])
-            added_count = 0
-
-            for word, pos, meaning in new_words:
-                if word.lower() not in existing_words:
-                    self.words.append((word, pos, meaning))
-                    existing_words.add(word.lower())
-                    added_count += 1
-
-            if added_count > 0:
+            if new_words:
+                self.words.extend(new_words)
                 self.save_words()
-                messagebox.showinfo("成功", f"成功导入 {added_count} 个新单词")
-
-                # 更新界面
-                if hasattr(self, 'dictionary_frame') and self.dictionary_frame.winfo_ismapped():
-                    self.refresh_word_list()
-                self.word_count_label.config(text=f"单词总数: {len(self.words)}")
+                self.current_words_display = self.words.copy()
+                self.refresh_word_list()
+                messagebox.showinfo("成功", f"已成功导入 {len(new_words)} 个新单词！")
             else:
-                messagebox.showinfo("提示", "没有新单词被导入（所有单词已存在）")
+                messagebox.showinfo("提示", "没有找到新的单词或文件格式不正确。")
 
         except Exception as e:
             messagebox.showerror("错误", f"导入文件时出错: {e}")
-
-    def search_words(self):
-        """搜索单词"""
-        term = self.search_term.get().strip().lower()
-        if not term:
-            # 如果搜索词为空，显示所有单词
-            self.current_words_display = self.words.copy()
-        else:
-            # 搜索包含搜索词的单词、词性或词义
-            self.current_words_display = []
-            for word, pos, meaning in self.words:
-                if term in word.lower() or term in pos.lower() or term in meaning.lower():
-                    self.current_words_display.append((word, pos, meaning))
-
-        self.current_page = 1
-        self.refresh_word_list()
-
-    def add_word(self):
-        """添加新单词"""
-        word = self.word_to_add.get().strip()
-        pos = self.pos_to_add.get().strip()
-        meaning = self.meaning_to_add.get().strip()
-
-        if not word or not meaning:
-            messagebox.showinfo("提示", "单词和释义不能为空")
-            return
-
-        # 检查是否已存在该单词
-        for w, _, _ in self.words:
-            if w.lower() == word.lower():
-                messagebox.showinfo("提示", f"单词 '{word}' 已存在")
-                return
-
-        # 添加新单词
-        self.words.append((word, pos, meaning))
-        self.save_words()
-
-        # 清空输入框
-        self.word_to_add.set("")
-        self.pos_to_add.set("")
-        self.meaning_to_add.set("")
-
-        # 更新单词列表
-        self.search_words()  # 刷新列表，显示新添加的单词
-
-        messagebox.showinfo("成功", f"单词 '{word}' 已添加")
-
-    def on_double_click_word(self, event):
-        """双击删除单词"""
-        selection = self.word_tree.selection()
-        if not selection:
-            return
-
-        item = selection[0]
-        word, pos, meaning = self.word_tree.item(item, "values")
-
-        # 确认删除
-        confirm = messagebox.askyesno("确认", f"确定要删除单词 '{word}' 吗？")
-        if confirm:
-            # 从列表中删除
-            self.words = [(w, p, m) for w, p, m in self.words if w != word]
-            self.save_words()
-
-            # 更新单词列表
-            self.refresh_word_list()
-
-            messagebox.showinfo("成功", f"单词 '{word}' 已删除")
-
-    def refresh_word_list(self):
-        """刷新单词列表"""
-        # 清除现有项
-        for item in self.word_tree.get_children():
-            self.word_tree.delete(item)
-
-        # 如果没有搜索结果，使用全部单词
-        if not hasattr(self, 'current_words_display') or not self.current_words_display:
-            self.current_words_display = self.words.copy()
-
-        # 计算总页数
-        total_pages = (len(self.current_words_display) + self.words_per_page - 1) // self.words_per_page
-        if total_pages == 0:
-            total_pages = 1
-
-        # 确保当前页有效
-        if self.current_page > total_pages:
-            self.current_page = total_pages
-
-        # 更新分页按钮状态
-        self.prev_button.config(state=tk.DISABLED if self.current_page == 1 else tk.NORMAL)
-        self.next_button.config(state=tk.DISABLED if self.current_page == total_pages else tk.NORMAL)
-        self.page_label.config(text=f"第 {self.current_page}/{total_pages} 页")
-
-        # 显示当前页的单词
-        start_idx = (self.current_page - 1) * self.words_per_page
-        end_idx = min(start_idx + self.words_per_page, len(self.current_words_display))
-
-        for i in range(start_idx, end_idx):
-            word, pos, meaning = self.current_words_display[i]
-            self.word_tree.insert("", tk.END, values=(word, pos, meaning))
-
-    def prev_page(self):
-        """上一页"""
-        if self.current_page > 1:
-            self.current_page -= 1
-            self.refresh_word_list()
-
-    def next_page(self):
-        """下一页"""
-        if (self.current_page * self.words_per_page) < len(self.current_words_display):
-            self.current_page += 1
-            self.refresh_word_list()
-
-    def refresh_history(self):
-        """刷新历史记录"""
-        # 清除现有项
-        for item in self.history_tree.get_children():
-            self.history_tree.delete(item)
-
-        # 按日期降序排列历史记录
-        sorted_records = sorted(self.history_records, key=lambda x: x['date'], reverse=True)
-
-        # 添加历史记录
-        for record in sorted_records:
-            accuracy = record['correct'] / record['total'] * 100 if record['total'] > 0 else 0
-            self.history_tree.insert("", tk.END, values=(
-                record['date'],
-                record['correct'],
-                record['total'],
-                f"{accuracy:.1f}%"
-            ))
-
-    def on_history_select(self, event):
-        """历史记录选择事件"""
-        selection = self.history_tree.selection()
-        if not selection:
-            return
-
-        item = selection[0]
-        date = self.history_tree.item(item, "values")[0]
-
-        # 查找对应的历史记录
-        for record in self.history_records:
-            if record['date'] == date:
-                # 显示详细结果
-                self.detail_text.config(state=tk.NORMAL)
-                self.detail_text.delete(1.0, tk.END)
-
-                result_text = f"日期: {record['date']}\n"
-                result_text += f"正确数: {record['correct']}/{record['total']}\n"
-                accuracy = record['correct'] / record['total'] * 100 if record['total'] > 0 else 0
-                result_text += f"正确率: {accuracy:.1f}%\n\n"
-
-                if record['wrong_words']:
-                    result_text += "错误的单词:\n"
-                    for i, (word, pos, meaning) in enumerate(record['wrong_words'], 1):
-                        result_text += f"{i}. {word} [{pos}] - {meaning}\n"
-
-                self.detail_text.insert(tk.END, result_text)
-                self.detail_text.config(state=tk.DISABLED)
-                break
-
-    def update_stats_charts(self):
-        """更新统计图表"""
-        # 清除现有图表
-        self.ax1.clear()
-        self.ax2.clear()
-
-        # 绘制学习进度图表
-        if self.history_records:
-            dates = [record['date'] for record in self.history_records]
-            accuracies = [record['correct'] / record['total'] * 100 for record in self.history_records]
-
-            self.ax1.plot(dates, accuracies, marker='o', linestyle='-', color=self.primary_color)
-            self.ax1.set_title('学习进度')
-            self.ax1.set_xlabel('日期')
-            self.ax1.set_ylabel('正确率 (%)')
-            self.ax1.tick_params(axis='x', rotation=45)
-            self.ax1.grid(True, linestyle='--', alpha=0.7)
-
-            # 添加数据标签
-            for x, y in zip(dates, accuracies):
-                self.ax1.annotate(f'{y:.1f}%', (x, y), textcoords='offset points',
-                                  xytext=(0, 10), ha='center', rotation=45)
-
-        # 绘制词性分布图表
-        pos_count = {}
-        for word, pos, meaning in self.words:
-            if pos:
-                pos_count[pos] = pos_count.get(pos, 0) + 1
-
-        if pos_count:
-            labels = list(pos_count.keys())
-            sizes = list(pos_count.values())
-
-            self.ax2.pie(sizes, labels=labels, autopct='%1.1f%%',
-                         startangle=90, colors=plt.cm.Paired.colors)
-            self.ax2.set_title('词性分布')
-            self.ax2.axis('equal')  # 保证饼图是圆的
-
-        # 调整布局
-        self.figure.tight_layout()
-
-        # 刷新画布
-        self.canvas.draw()
 
 
 if __name__ == "__main__":
     root = tk.Tk()
     app = VocabularyTestApp(root)
-
-    # 设置ttk样式
-    style = ttk.Style()
-
-    # 配置主题颜色
-    style.configure('TFrame', background=app.light_color)
-    style.configure('TLabel', background=app.light_color, font=app.default_font)
-    style.configure('TButton', font=app.button_font)
-    style.configure('TCheckbutton', background=app.light_color, font=app.default_font)
-    style.configure('TRadiobutton', background=app.light_color, font=app.default_font)
-    style.configure('TTreeview', background=app.light_color, font=app.default_font)
-    style.configure('TTreeview.Heading', font=app.default_font, fontweight='bold')
-
-    # 自定义样式
-    style.configure('Accent.TButton', foreground='white', background=app.primary_color)
-    style.configure('Option.TRadiobutton', font=app.option_font)
-
-    # 启动应用
     root.mainloop()
