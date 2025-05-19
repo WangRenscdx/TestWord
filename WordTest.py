@@ -50,6 +50,7 @@ class VocabularyTestApp:
 
         # 生词本管理相关变量
         self.word_to_add = tk.StringVar()
+        self.pos_to_add = tk.StringVar()  # 新增：词性
         self.meaning_to_add = tk.StringVar()
         self.search_term = tk.StringVar()
         self.current_words_display = []
@@ -204,6 +205,9 @@ class VocabularyTestApp:
         self.word_label = ttk.Label(self.question_frame, text="", font=self.question_font, wraplength=700)
         self.word_label.pack(pady=(0, 10))
 
+        self.pos_label = ttk.Label(self.question_frame, text="", font=self.question_font, wraplength=700)  # 新增：词性标签
+        self.pos_label.pack(pady=(0, 10))
+
         self.meaning_label = ttk.Label(self.question_frame, text="", font=self.question_font, wraplength=700)
         self.meaning_label.pack(pady=(0, 10))
 
@@ -212,10 +216,14 @@ class VocabularyTestApp:
         self.options_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
         # 结果区域
-        self.result_frame = ttk.LabelFrame(self.content_frame, text="结果", padding="10")
+        self.result_frame = ttk.Frame(self.content_frame)
         self.result_frame.pack(fill=tk.X, pady=(0, 10))
 
-        self.result_label = ttk.Label(self.result_frame, text="", font=self.question_font)
+        # 结果标签
+        result_label_frame = ttk.LabelFrame(self.result_frame, text="结果", padding="10")
+        result_label_frame.pack(fill=tk.X)
+
+        self.result_label = ttk.Label(result_label_frame, text="", font=self.question_font)
         self.result_label.pack()
 
         # 底部按钮区域
@@ -279,10 +287,13 @@ class VocabularyTestApp:
         word_entry_frame.pack(fill=tk.X, pady=(0, 5))
 
         ttk.Label(word_entry_frame, text="单词:", font=self.default_font).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Entry(word_entry_frame, textvariable=self.word_to_add, width=20).pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Entry(word_entry_frame, textvariable=self.word_to_add, width=15).pack(side=tk.LEFT, padx=(0, 10))
+
+        ttk.Label(word_entry_frame, text="词性:", font=self.default_font).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Entry(word_entry_frame, textvariable=self.pos_to_add, width=10).pack(side=tk.LEFT, padx=(0, 10))
 
         ttk.Label(word_entry_frame, text="释义:", font=self.default_font).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Entry(word_entry_frame, textvariable=self.meaning_to_add, width=20).pack(side=tk.LEFT)
+        ttk.Entry(word_entry_frame, textvariable=self.meaning_to_add, width=15).pack(side=tk.LEFT)
 
         add_button = ttk.Button(add_frame, text="添加", command=self.add_word)
         add_button.pack(side=tk.RIGHT, pady=(0, 5))
@@ -291,14 +302,19 @@ class VocabularyTestApp:
         list_frame = ttk.LabelFrame(self.dictionary_frame, text="单词列表", padding="10")
         list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
-        # 创建表格
-        columns = ("单词", "释义")
+        # 创建表格 - 增加词性列
+        columns = ("单词", "词性", "释义")
         self.word_tree = ttk.Treeview(list_frame, columns=columns, show="headings", height=15)
 
         # 设置列宽和标题
-        for col in columns:
-            self.word_tree.heading(col, text=col)
-            self.word_tree.column(col, width=200, anchor=tk.CENTER)
+        self.word_tree.heading("单词", text="单词")
+        self.word_tree.column("单词", width=200, anchor=tk.CENTER)
+
+        self.word_tree.heading("词性", text="词性")
+        self.word_tree.column("词性", width=100, anchor=tk.CENTER)
+
+        self.word_tree.heading("释义", text="释义")
+        self.word_tree.column("释义", width=300, anchor=tk.CENTER)
 
         # 添加滚动条
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.word_tree.yview)
@@ -442,6 +458,7 @@ class VocabularyTestApp:
                 # 更新测验区域字体
                 if hasattr(self, 'word_label'):
                     self.word_label.config(font=self.question_font)
+                    self.pos_label.config(font=self.question_font)  # 更新词性标签字体
                     self.meaning_label.config(font=self.question_font)
                     self.result_label.config(font=self.question_font)
 
@@ -458,17 +475,28 @@ class VocabularyTestApp:
             if self.file_path.exists():
                 wb = load_workbook(filename=self.file_path)
                 sheet = wb.active
+
+                # 检查列数
+                max_column = sheet.max_column
+
                 words = []
                 for row in sheet.iter_rows(min_row=2, values_only=True):
-                    if row[0] and row[1]:
-                        words.append((row[0], row[1]))
+                    if not row[0]:  # 如果第一列(单词)为空，则跳过
+                        continue
+
+                    word = row[0]
+                    pos = row[1] if max_column >= 2 else ""  # 词性(如果有)
+                    meaning = row[2] if max_column >= 3 else ""  # 词义(如果有)
+
+                    words.append((word, pos, meaning))
+
                 return wb, sheet, words
             else:
                 # 创建新的Excel文件
                 wb = Workbook()
                 sheet = wb.active
                 sheet.title = "单词本"
-                sheet.append(["单词", "释义"])
+                sheet.append(["单词", "词性", "词义"])  # 更新表头为三列
                 wb.save(filename=self.file_path)
                 return wb, sheet, []
         except Exception as e:
@@ -490,8 +518,13 @@ class VocabularyTestApp:
                             wrong_items = row[3].split(';')
                             for item in wrong_items:
                                 if item:
-                                    word, meaning = item.split(':')
-                                    wrong_words.append((word, meaning))
+                                    parts = item.split(':')
+                                    if len(parts) >= 3:  # 处理包含词性的错误单词
+                                        word, pos, meaning = parts[0], parts[1], ':'.join(parts[2:])
+                                        wrong_words.append((word, pos, meaning))
+                                    elif len(parts) == 2:  # 兼容旧格式
+                                        word, meaning = parts
+                                        wrong_words.append((word, "", meaning))
                         self.history_records.append({
                             'date': row[0],
                             'correct': row[1],
@@ -508,14 +541,14 @@ class VocabularyTestApp:
                 self.wb = Workbook()
                 self.sheet = self.wb.active
                 self.sheet.title = "单词本"
-                self.sheet.append(["单词", "释义"])
+                self.sheet.append(["单词", "词性", "词义"])  # 更新表头为三列
 
             # 清空现有数据
             self.sheet.delete_rows(2, self.sheet.max_row)
 
             # 添加新数据
-            for word, meaning in self.words:
-                self.sheet.append([word, meaning])
+            for word, pos, meaning in self.words:
+                self.sheet.append([word, pos, meaning])
 
             self.wb.save(filename=self.file_path)
             self.word_count_label.config(text=f"单词总数: {len(self.words)}")
@@ -533,8 +566,8 @@ class VocabularyTestApp:
             sheet.append(["日期", "正确数", "总数", "错误单词"])
 
             for record in self.history_records:
-                # 格式化错误单词
-                wrong_words_str = ';'.join([f"{word}:{meaning}" for word, meaning in record['wrong_words']])
+                # 格式化错误单词 - 包含词性
+                wrong_words_str = ';'.join([f"{word}:{pos}:{meaning}" for word, pos, meaning in record['wrong_words']])
                 sheet.append([record['date'], record['correct'], record['total'], wrong_words_str])
 
             wb.save(filename=self.history_path)
@@ -556,6 +589,7 @@ class VocabularyTestApp:
     def show_welcome(self):
         """显示欢迎信息"""
         self.word_label.config(text="欢迎使用单词测验程序！")
+        self.pos_label.config(text="")  # 清空词性标签
         self.meaning_label.config(text="请选择测验模式并点击开始测试。")
         self.clear_options()
         self.result_label.config(text="")
@@ -563,6 +597,7 @@ class VocabularyTestApp:
     def show_empty_state(self):
         """显示空状态信息"""
         self.word_label.config(text="单词本为空")
+        self.pos_label.config(text="")  # 清空词性标签
         self.meaning_label.config(text="请导入Excel文件或添加新单词。")
         self.clear_options()
         self.result_label.config(text="")
@@ -636,12 +671,14 @@ class VocabularyTestApp:
 
         if self.mode.get() == "word_to_meaning":
             self.word_label.config(text=f"单词：{self.current_word[0]}")
+            self.pos_label.config(text=f"词性：{self.current_word[1]}")  # 显示词性
             self.meaning_label.config(text="")
-            self.show_options(self.current_word[1], [word[1] for word in self.words if word[1]])
+            self.show_options(self.current_word[2], [word[2] for word in self.words if word[2]])  # 使用词义作为选项
         else:
             self.word_label.config(text="")
-            self.meaning_label.config(text=f"释义：{self.current_word[1]}")
-            self.show_options(self.current_word[0], [word[0] for word in self.words if word[0]])
+            self.pos_label.config(text=f"词性：{self.current_word[1]}")  # 显示词性
+            self.meaning_label.config(text=f"释义：{self.current_word[2]}")
+            self.show_options(self.current_word[0], [word[0] for word in self.words if word[0]])  # 使用单词作为选项
 
         self.check_button.config(state=tk.NORMAL)
         self.update_progress()
@@ -693,16 +730,16 @@ class VocabularyTestApp:
         self.total_count += 1
 
         if self.mode.get() == "word_to_meaning":
-            correct_answer = self.current_word[1]
+            correct_answer = self.current_word[2]  # 使用词义作为正确答案
         else:
-            correct_answer = self.current_word[0]
+            correct_answer = self.current_word[0]  # 使用单词作为正确答案
 
         if selected == correct_answer:
             self.correct_count += 1
             self.result_label.config(text="回答正确！", foreground="green")
         else:
             self.result_label.config(text=f"回答错误，正确答案是：{correct_answer}", foreground="red")
-            self.wrong_answers.append(self.current_word)
+            self.wrong_answers.append(self.current_word)  # 保存整个单词元组(包括词性)
 
         # 禁用检查按钮，直到下一题
         self.check_button.config(state=tk.DISABLED)
@@ -747,8 +784,8 @@ class VocabularyTestApp:
         # 显示错误单词（如果有）
         if self.wrong_answers:
             wrong_words_text = "\n\n错误的单词:\n"
-            for word, meaning in self.wrong_answers:
-                wrong_words_text += f"{word} - {meaning}\n"
+            for word, pos, meaning in self.wrong_answers:
+                wrong_words_text += f"{word} [{pos}] - {meaning}\n"
 
             # 创建错误单词文本框
             wrong_text = tk.Text(self.result_frame, font=self.result_font, wrap=tk.WORD, height=10)
@@ -786,9 +823,11 @@ class VocabularyTestApp:
 
         if self.mode.get() == "word_to_meaning":
             self.word_label.config(text="")
+            self.pos_label.config(text="")  # 清空词性标签
             self.meaning_label.config(text="")
         else:
             self.word_label.config(text="")
+            self.pos_label.config(text="")  # 清空词性标签
             self.meaning_label.config(text="")
 
         self.clear_options()
@@ -798,7 +837,7 @@ class VocabularyTestApp:
 
         # 移除结果区域的动态添加的控件
         for widget in self.result_frame.winfo_children():
-            if widget != self.result_label:
+            if widget != self.result_label and widget.winfo_class() != 'Labelframe':
                 widget.destroy()
 
     def update_progress(self):
@@ -820,22 +859,31 @@ class VocabularyTestApp:
             wb = load_workbook(filename=file_path)
             sheet = wb.active
 
+            # 检查列数
+            max_column = sheet.max_column
+
             new_words = []
             for row in sheet.iter_rows(min_row=2, values_only=True):
-                if row[0] and row[1]:
-                    new_words.append((row[0], row[1]))
+                if not row[0]:  # 如果第一列(单词)为空，则跳过
+                    continue
+
+                word = row[0]
+                pos = row[1] if max_column >= 2 else ""  # 词性(如果有)
+                meaning = row[2] if max_column >= 3 else ""  # 词义(如果有)
+
+                new_words.append((word, pos, meaning))
 
             if not new_words:
                 messagebox.showinfo("提示", "未找到有效的单词数据")
                 return
 
             # 添加新单词
-            existing_words = set([word.lower() for word, _ in self.words])
+            existing_words = set([word.lower() for word, _, _ in self.words])
             added_count = 0
 
-            for word, meaning in new_words:
+            for word, pos, meaning in new_words:
                 if word.lower() not in existing_words:
-                    self.words.append((word, meaning))
+                    self.words.append((word, pos, meaning))
                     existing_words.add(word.lower())
                     added_count += 1
 
@@ -860,11 +908,11 @@ class VocabularyTestApp:
             # 如果搜索词为空，显示所有单词
             self.current_words_display = self.words.copy()
         else:
-            # 搜索包含搜索词的单词
+            # 搜索包含搜索词的单词、词性或词义
             self.current_words_display = []
-            for word, meaning in self.words:
-                if term in word.lower() or term in meaning.lower():
-                    self.current_words_display.append((word, meaning))
+            for word, pos, meaning in self.words:
+                if term in word.lower() or term in pos.lower() or term in meaning.lower():
+                    self.current_words_display.append((word, pos, meaning))
 
         self.current_page = 1
         self.refresh_word_list()
@@ -872,6 +920,7 @@ class VocabularyTestApp:
     def add_word(self):
         """添加新单词"""
         word = self.word_to_add.get().strip()
+        pos = self.pos_to_add.get().strip()
         meaning = self.meaning_to_add.get().strip()
 
         if not word or not meaning:
@@ -879,17 +928,18 @@ class VocabularyTestApp:
             return
 
         # 检查是否已存在该单词
-        for w, _ in self.words:
+        for w, _, _ in self.words:
             if w.lower() == word.lower():
                 messagebox.showinfo("提示", f"单词 '{word}' 已存在")
                 return
 
         # 添加新单词
-        self.words.append((word, meaning))
+        self.words.append((word, pos, meaning))
         self.save_words()
 
         # 清空输入框
         self.word_to_add.set("")
+        self.pos_to_add.set("")
         self.meaning_to_add.set("")
 
         # 更新单词列表
@@ -904,13 +954,13 @@ class VocabularyTestApp:
             return
 
         item = selection[0]
-        word, meaning = self.word_tree.item(item, "values")
+        word, pos, meaning = self.word_tree.item(item, "values")
 
         # 确认删除
         confirm = messagebox.askyesno("确认", f"确定要删除单词 '{word}' 吗？")
         if confirm:
             # 从列表中删除
-            self.words = [(w, m) for w, m in self.words if w != word]
+            self.words = [(w, p, m) for w, p, m in self.words if w != word]
             self.save_words()
 
             # 更新单词列表
@@ -947,8 +997,8 @@ class VocabularyTestApp:
         end_idx = min(start_idx + self.words_per_page, len(self.current_words_display))
 
         for i in range(start_idx, end_idx):
-            word, meaning = self.current_words_display[i]
-            self.word_tree.insert("", tk.END, values=(word, meaning))
+            word, pos, meaning = self.current_words_display[i]
+            self.word_tree.insert("", tk.END, values=(word, pos, meaning))
 
     def prev_page(self):
         """上一页"""
@@ -1004,8 +1054,8 @@ class VocabularyTestApp:
 
                 if record['wrong_words']:
                     result_text += "错误的单词:\n"
-                    for i, (word, meaning) in enumerate(record['wrong_words'], 1):
-                        result_text += f"{i}. {word} - {meaning}\n"
+                    for i, (word, pos, meaning) in enumerate(record['wrong_words'], 1):
+                        result_text += f"{i}. {word} [{pos}] - {meaning}\n"
 
                 self.detail_text.insert(tk.END, result_text)
                 self.detail_text.config(state=tk.DISABLED)
@@ -1013,67 +1063,68 @@ class VocabularyTestApp:
 
     def update_stats_charts(self):
         """更新统计图表"""
-        # 清空图表
+        # 清除现有图表
         self.ax1.clear()
         self.ax2.clear()
 
-        # 1. 正确率趋势图
+        # 绘制学习进度图表
         if self.history_records:
-            # 按日期排序
-            sorted_records = sorted(self.history_records, key=lambda x: x['date'])
-
-            dates = [record['date'][-8:-3] for record in sorted_records]  # 只取时分
-            accuracies = [record['correct'] / record['total'] * 100 for record in sorted_records]
+            dates = [record['date'] for record in self.history_records]
+            accuracies = [record['correct'] / record['total'] * 100 for record in self.history_records]
 
             self.ax1.plot(dates, accuracies, marker='o', linestyle='-', color=self.primary_color)
-            self.ax1.set_title('正确率趋势')
-            self.ax1.set_xlabel('测验时间')
+            self.ax1.set_title('学习进度')
+            self.ax1.set_xlabel('日期')
             self.ax1.set_ylabel('正确率 (%)')
+            self.ax1.tick_params(axis='x', rotation=45)
             self.ax1.grid(True, linestyle='--', alpha=0.7)
 
             # 添加数据标签
             for x, y in zip(dates, accuracies):
                 self.ax1.annotate(f'{y:.1f}%', (x, y), textcoords='offset points',
-                                  xytext=(0, 5), ha='center')
-        else:
-            self.ax1.text(0.5, 0.5, '暂无历史记录', ha='center', va='center', transform=self.ax1.transAxes)
-            self.ax1.set_title('正确率趋势')
+                                  xytext=(0, 10), ha='center', rotation=45)
 
-        # 2. 单词掌握情况饼图
-        if self.words:
-            # 随机分配掌握程度（实际应用中应根据用户表现计算）
-            mastered = int(len(self.words) * 0.6)  # 假设60%已掌握
-            learning = int(len(self.words) * 0.3)  # 30%正在学习
-            new = len(self.words) - mastered - learning  # 10%新单词
+        # 绘制词性分布图表
+        pos_count = {}
+        for word, pos, meaning in self.words:
+            if pos:
+                pos_count[pos] = pos_count.get(pos, 0) + 1
 
-            labels = ['已掌握', '学习中', '新单词']
-            sizes = [mastered, learning, new]
-            colors = ['#4CAF50', '#FFC107', '#F44336']
+        if pos_count:
+            labels = list(pos_count.keys())
+            sizes = list(pos_count.values())
 
-            self.ax2.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%',
-                         startangle=90, wedgeprops={'edgecolor': 'w'})
-            self.ax2.set_title('单词掌握情况')
+            self.ax2.pie(sizes, labels=labels, autopct='%1.1f%%',
+                         startangle=90, colors=plt.cm.Paired.colors)
+            self.ax2.set_title('词性分布')
             self.ax2.axis('equal')  # 保证饼图是圆的
-        else:
-            self.ax2.text(0.5, 0.5, '暂无单词数据', ha='center', va='center', transform=self.ax2.transAxes)
-            self.ax2.set_title('单词掌握情况')
 
-        # 调整布局并绘制
+        # 调整布局
         self.figure.tight_layout()
+
+        # 刷新画布
         self.canvas.draw()
 
 
-def main():
+if __name__ == "__main__":
     root = tk.Tk()
+    app = VocabularyTestApp(root)
 
     # 设置ttk样式
     style = ttk.Style()
-    style.configure('Accent.TButton', font=('Arial', 12, 'bold'), foreground='white', background='#007ACC')
-    style.configure('Option.TRadiobutton', font=('Microsoft YaHei UI', 16))
 
-    app = VocabularyTestApp(root)
+    # 配置主题颜色
+    style.configure('TFrame', background=app.light_color)
+    style.configure('TLabel', background=app.light_color, font=app.default_font)
+    style.configure('TButton', font=app.button_font)
+    style.configure('TCheckbutton', background=app.light_color, font=app.default_font)
+    style.configure('TRadiobutton', background=app.light_color, font=app.default_font)
+    style.configure('TTreeview', background=app.light_color, font=app.default_font)
+    style.configure('TTreeview.Heading', font=app.default_font, fontweight='bold')
+
+    # 自定义样式
+    style.configure('Accent.TButton', foreground='white', background=app.primary_color)
+    style.configure('Option.TRadiobutton', font=app.option_font)
+
+    # 启动应用
     root.mainloop()
-
-
-if __name__ == "__main__":
-    main()
