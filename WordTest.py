@@ -4,8 +4,7 @@ from datetime import datetime, timedelta
 from tkinter import messagebox, ttk, filedialog
 import sqlite3
 from pathlib import Path
-from openpyxl import load_workbook, Workbook
-from fpdf import FPDF
+import json
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
@@ -30,6 +29,7 @@ class VocabularyTestApp:
         self.correct_answers = 0
         self.time_left = timedelta(minutes=20)
         self.timer_running = False
+        self.incorrect_words = []  # 存储本次测试中的错误单词
 
         # 初始化界面
         self.setup_styles()
@@ -46,6 +46,10 @@ class VocabularyTestApp:
         style.configure('Nav.TButton', background='#F0F0F0', padding=5)
         style.map('Nav.TButton', background=[('active', '#0078D7')])
         style.configure('Accent.TButton', background='#0078D7', foreground='white')
+        style.configure('Option.TButton',
+                        padding=8,  # 增加内边距，提高可点击区域
+                        anchor='w',  # 文本左对齐
+                        justify='left')  # 多行文本左对齐
 
     def create_widgets(self):
         """创建主界面组件"""
@@ -111,15 +115,18 @@ class VocabularyTestApp:
                                 total_questions
                                 INTEGER
                                 NOT
-                                NULL
+                                NULL,
+                                incorrect_words
+                                TEXT -- 存储JSON格式的错误单词列表
                             )""")
 
     def load_data(self):
         """从数据库加载数据"""
         with sqlite3.connect(self.db_path) as conn:
             self.words = conn.execute("SELECT word, pos, meaning FROM words").fetchall()
-            self.history_records = conn.execute("""SELECT test_date, accuracy, duration, total_questions
-                                                   FROM history
+            self.history_records = conn.execute(
+                """SELECT test_date, accuracy, duration, total_questions, incorrect_words
+                   FROM history
                                                    ORDER BY test_date DESC""").fetchall()
         self.current_words_display = self.words.copy()
 
@@ -167,6 +174,7 @@ class VocabularyTestApp:
         self.correct_answers = 0
         self.time_left = timedelta(minutes=20)
         self.timer_running = True
+        self.incorrect_words = []  # 清空上次的错误记录
 
         self.clear_content()
         self.create_test_ui()
@@ -193,7 +201,7 @@ class VocabularyTestApp:
         self.question_label = ttk.Label(self.question_frame, font=('Microsoft YaHei', 16))
         self.question_label.pack(pady=20)
 
-        # 选项区域（6个选项）
+        # 选项区域
         self.options_frame = ttk.Frame(self.main_content)
         self.options_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -235,12 +243,16 @@ class VocabularyTestApp:
                 field="meaning" if mode == "word_to_meaning" else "word"
             )
 
-            # 创建选项按钮（3列布局）
             for i, opt in enumerate(options):
-                btn = ttk.Button(self.options_frame, text=opt,
-                                 command=lambda o=opt: self.check_answer(o,
-                                                                         meaning if mode == "word_to_meaning" else word))
-                btn.grid(row=i // 2, column=i % 2, padx=5, pady=5, sticky="ew")
+                # 创建选项文本，添加序号前缀
+                option_text = f"{chr(65 + i)}. {opt}"
+
+                # 直接创建按钮，不使用嵌套Frame
+                btn = ttk.Button(self.options_frame,
+                                 text=option_text,
+                                 style='Option.TButton',
+                                 command=lambda o=opt: self.check_answer(o, meaning if mode == "word_to_meaning" else word))
+                btn.pack(fill=tk.X, padx=5, pady=5)  # 使用pack布局，简化结构
 
     def show_translation_fill(self, word, pos, meaning):
         """显示翻译填空题"""
@@ -274,6 +286,14 @@ class VocabularyTestApp:
             self.result_label.config(text="✓ 正确！", foreground="green")
         else:
             self.result_label.config(text=f"✗ 错误！正确答案：{correct}", foreground="red")
+            # 记录错误单词
+            current_word = self.test_words[self.current_question][0]
+            self.incorrect_words.append({
+                "word": current_word,
+                "correct_meaning": correct,
+                "user_answer": selected,
+                "test_date": datetime.now().strftime("%Y-%m-%d %H:%M")
+            })
         self.current_question += 1
         self.root.after(1000, self.show_question)
 
@@ -285,6 +305,14 @@ class VocabularyTestApp:
             self.result_label.config(text="✓ 正确！", foreground="green")
         else:
             self.result_label.config(text=f"✗ 错误！正确答案：{correct}", foreground="red")
+            # 记录错误单词
+            current_word = self.test_words[self.current_question][0]
+            self.incorrect_words.append({
+                "word": current_word,
+                "correct_meaning": correct,
+                "user_answer": answer,
+                "test_date": datetime.now().strftime("%Y-%m-%d %H:%M")
+            })
         self.current_question += 1
         self.root.after(1000, self.show_question)
 
@@ -296,11 +324,22 @@ class VocabularyTestApp:
         if self.time_left.total_seconds() <= 0:
             self.end_test()
             return
-
+        if not self.timer_label.winfo_exists():
+            self.timer_running = False
+            return
         self.time_left -= timedelta(seconds=1)
         mins, secs = divmod(int(self.time_left.total_seconds()), 60)
         self.timer_label.config(text=f"{mins:02}:{secs:02}")
         self.root.after(1000, self.update_timer)
+        # 使用try-except块捕获可能的错误
+        try:
+            self.timer_label.config(text=f"{mins:02}:{secs:02}")
+        except:
+            self.timer_running = False
+
+        # 仅在标签存在且计时器运行时继续计时
+        if self.timer_label.winfo_exists() and self.timer_running:
+            self.root.after(1000, self.update_timer)
 
     def end_test(self):
         """结束测试"""
@@ -309,17 +348,21 @@ class VocabularyTestApp:
         accuracy = round(self.correct_answers / total * 100, 1) if total else 0
         duration = str(datetime.now() - (datetime.now() - self.time_left)).split(".")[0]
 
-        # 保存记录
+        # 保存历史记录
+        incorrect_data = json.dumps(self.incorrect_words) if self.incorrect_words else None
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""INSERT INTO history (test_date, accuracy, duration, total_questions)
-                            VALUES (?, ?, ?, ?)""",
+            conn.execute("""INSERT INTO history (test_date, accuracy, duration, total_questions, incorrect_words)
+                            VALUES (?, ?, ?, ?, ?)""",
                          (datetime.now().strftime("%Y-%m-%d %H:%M"),
                           accuracy,
                           duration,
-                          total))
+                          total,
+                          incorrect_data))
 
         messagebox.showinfo("测试完成",
                             f"正确率：{accuracy}%\n用时：{duration}\n正确题数：{self.correct_answers}/{total}")
+        self.load_data()  # 重新加载数据以更新历史记录
+        self.show_statistics()  # 直接跳转到统计页面
 
     # 生词本模块 --------------------------------------------------------
     def show_vocabulary(self):
@@ -454,25 +497,97 @@ class VocabularyTestApp:
 
     # 统计模块 ----------------------------------------------------------
     def show_statistics(self):
-        """显示统计信息"""
+        """显示统计信息（包含错误单词列表）"""
         self.clear_content()
 
-        fig = plt.Figure(figsize=(8, 4), dpi=100)
+        # 创建主框架（分上下两部分：图表 + 错误单词表）
+        main_frame = ttk.Frame(self.main_content)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # 上半部分：正确率趋势图
+        chart_frame = ttk.Frame(main_frame, height=200)
+        chart_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # 下半部分：错误单词表
+        error_frame = ttk.Frame(main_frame)
+        error_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # ---------------------- 绘制图表 ----------------------
+        fig = plt.Figure(figsize=(8, 3), dpi=100)
         ax = fig.add_subplot(111)
+        plt.rcParams["font.family"] = ["SimHei"]
+        plt.rcParams["axes.unicode_minus"] = False
 
         if self.history_records:
-            dates = [rec[0][5:10] for rec in self.history_records[:10]]
-            accuracies = [rec[1] for rec in self.history_records[:10]]
-            ax.plot(dates[::-1], accuracies[::-1], marker='o')
-            ax.set_title("最近10次测试正确率趋势")
-            ax.set_xlabel("日期")
-            ax.set_ylabel("正确率 (%)")
+            recent_records = self.history_records[:10][::-1]
+            dates = [rec[0][5:10] for rec in recent_records]
+            accuracies = [rec[1] for rec in recent_records]
+            ax.plot(dates, accuracies, marker='o', color='#4a86e8')
+            ax.set_title("最近10次测试正确率趋势", fontsize=12)
+            ax.set_xlabel("日期", fontsize=10)
+            ax.set_ylabel("正确率 (%)", fontsize=10)
+            ax.grid(True, linestyle='--', alpha=0.7)
         else:
             ax.text(0.5, 0.5, "暂无测试数据", ha='center', va='center')
+            ax.axis('off')
 
-        canvas = FigureCanvasTkAgg(fig, master=self.main_content)
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=chart_frame)
         canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        canvas.get_tk_widget().pack(fill=tk.X)
+
+        # ---------------------- 显示错误单词表 ----------------------
+        # 获取最近的错误单词记录（最多10条）
+        recent_errors = self.get_recent_incorrect_words()
+
+        if not recent_errors:
+            ttk.Label(error_frame, text="暂无错误单词记录", font=('Microsoft YaHei', 12)).pack(pady=20)
+            return
+
+        # 创建表格
+        columns = ("测试日期", "单词", "正确释义", "你的答案")
+        self.error_tree = ttk.Treeview(error_frame, columns=columns, show="headings", height=5)
+        for col in columns:
+            self.error_tree.heading(col, text=col)
+            self.error_tree.column(col, width=120 if col == "测试日期" else 180)  # 调整列宽
+        self.error_tree.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # 填充数据
+        for error in recent_errors:
+            self.error_tree.insert("", "end", values=(
+                error["test_date"][:16],  # 缩短日期显示（只显示到分钟）
+                error["word"],
+                error["correct_meaning"],
+                error["user_answer"]
+            ))
+
+        # 添加滚动条
+        scrollbar = ttk.Scrollbar(error_frame, orient="vertical", command=self.error_tree.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.error_tree.configure(yscrollcommand=scrollbar.set)
+
+        # 添加标题
+        ttk.Label(error_frame, text="最近错误单词（最多显示10条）", font=('Microsoft YaHei', 12, 'bold')).pack(pady=5, anchor='w')
+
+    def get_recent_incorrect_words(self):
+        """从数据库获取最近的错误单词记录（最多10条）"""
+        recent_errors = []
+        with sqlite3.connect(self.db_path) as conn:
+            # 按时间倒序查询最近10条包含错误单词的记录
+            records = conn.execute("""
+                                   SELECT test_date, incorrect_words
+                                   FROM history
+                                   WHERE incorrect_words IS NOT NULL
+                                   ORDER BY test_date DESC
+                                       LIMIT 10
+                                   """).fetchall()
+        for date_str, json_data in records:
+            try:
+                errors = json.loads(json_data)  # 解析JSON数据
+                recent_errors.extend(errors)
+            except json.JSONDecodeError:
+                continue
+        return recent_errors[:10]  # 最多显示10条错误记录
 
     # 导出模块 ----------------------------------------------------------
     def show_export(self):
@@ -493,6 +608,12 @@ class VocabularyTestApp:
 
     def export_excel(self):
         """导出到Excel"""
+        try:
+            from openpyxl import Workbook
+        except ImportError:
+            messagebox.showerror("错误", "请先安装openpyxl库：pip install openpyxl")
+            return
+
         path = filedialog.asksaveasfilename(defaultextension=".xlsx")
         if not path: return
 
@@ -509,19 +630,20 @@ class VocabularyTestApp:
 
     def export_pdf(self):
         """导出到PDF"""
+        try:
+            from fpdf import FPDF
+        except ImportError:
+            messagebox.showerror("错误", "请先安装fpdf库：pip install fpdf")
+            return
+
         path = filedialog.asksaveasfilename(defaultextension=".pdf")
         if not path: return
 
         try:
             pdf = FPDF()
             pdf.add_page()
-            # 如果使用绝对路径
-            pdf.add_font('SimHei', '', r'C:\path\to\simhei.ttf', uni=True)
-
-            # 如果使用系统已安装字体（需完成步骤2的第二种安装方式）
             pdf.add_font('SimHei', '', 'simhei.ttf', uni=True)
-            pdf.add_font('MSYH', '', 'msyh.ttc', uni=True)
-            pdf.set_font('MSYH', '', 12)
+            pdf.set_font('SimHei', '', 12)
 
             col_widths = [40, 20, 130]
             pdf.cell(col_widths[0], 10, "单词", border=1)
@@ -558,6 +680,12 @@ class VocabularyTestApp:
     # 导入模块 ----------------------------------------------------------
     def import_excel(self):
         """导入Excel数据"""
+        try:
+            from openpyxl import load_workbook
+        except ImportError:
+            messagebox.showerror("错误", "请先安装openpyxl库：pip install openpyxl")
+            return
+
         path = filedialog.askopenfilename(filetypes=[("Excel文件", "*.xlsx")])
         if not path: return
 
@@ -574,8 +702,7 @@ class VocabularyTestApp:
                     ))
 
             with sqlite3.connect(self.db_path) as conn:
-                conn.executemany("""INSERT
-                OR IGNORE INTO words (word, pos, meaning)
+                conn.executemany("""INSERT OR IGNORE INTO words (word, pos, meaning)
                                   VALUES (?, ?, ?)""", new_words)
 
             self.load_data()
